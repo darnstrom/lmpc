@@ -1,0 +1,22 @@
+[project]
+name = "lmpc"
+version = "0.1.0"
+description = "Linear MPC with code generation"
+readme = "README.md"
+authors = [
+    { name = "Daniel Arnström", email = "daniel.arnstrom@gmail.com" } 
+]
+requires-python = ">=3.8"
+dependencies = [
+    "juliacall>=0.9.23",
+    "numpy",
+]
+
+[project.optional-dependencies]
+[project.urls]
+Homepage = "https://github.com/darnstrom/lmpc"
+Issues = "https://github.com/darnstrom/lmpc/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
