@@ -4,10 +4,8 @@ from types import ModuleType
 from typing import cast
 from juliacall import Main as jl
 from juliacall import AnyValue
-
 jl = cast(ModuleType, jl)
 jl_version = (jl.VERSION.major, jl.VERSION.minor, jl.VERSION.patch)
-
 jl.seval("using LinearMPC")
 LinearMPC = jl.LinearMPC
 
@@ -20,6 +18,7 @@ class MPC:
     def compute_control(self,x,r=None, d=None, uprev=None):
         return  LinearMPC.compute_control(self.jl_mpc, x, r = r, d=d, uprev=uprev)
     
+    # Setting up problem 
     def setup(self):
         LinearMPC.setup_b(self.jl_mpc)
 
@@ -41,6 +40,10 @@ class MPC:
                                     ks=ks, soft=soft, binary=binary, prio=prio)
 
     def set_weights(self, Q=None, R=None ,Rr=None, S=None, rho=None, Qf=None):
+        if Q is not None: Q = np.array(Q)
+        if R is not None: R = np.array(R)
+        if Rr is not None: Rr = np.array(Rr)
+        if Qf is not None: Qf = np.array(Qf)
         LinearMPC.set_weights_b(self.jl_mpc, Q=Q, R=R, Rr=Rr,S=S, rho=rho, Qf=Qf)
 
     def set_terminal_cost(self):
@@ -56,3 +59,12 @@ class MPC:
         LinearMPC.move_block_b(self.jl_mpc,move)
 
 
+    # code generation 
+    def codegen(self, fname="mpc_workspace", dir="codegen", opt_settings=None, src=True, float_type="double"):
+        LinearMPC.codegen(self.jl_mpc,fname=fname,dir=dir,opt_settings=opt_settings,src=src,float_type=float_type)
+
+# Explicit MPC
+class ExplicitMPC:
+    jl_empc:AnyValue
+    def __init__(self,mpc,range=None,build_tree=False):
+        self.jl_empc = LinearMPC.ExplicitMPC(mpc.jl_mpc,range=range,build_tree=build_tree)

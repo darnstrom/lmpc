@@ -1,1 +1,1 @@
-from .lmpc import MPC 
+from .lmpc import MPC,ExplicitMPC
