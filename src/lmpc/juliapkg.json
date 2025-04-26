@@ -1,9 +1,9 @@
 {
-    "julia": "~1.6.7, ~1.7, ~1.8, ~1.9, =1.10.0, ~1.10.3",
+    "julia": "=1.11.5",
     "packages": {
         "LinearMPC": {
-            "uuid": "82e1c212-e1a2-49d2-b26a-a31d6968e3bd",
-            "version": "0.2.0"
+            "uuid": "82e1c212-e1a2-49d2-b26a-a31d6968e3bd", 
+            "version": "0.3.0"
         }
     }
 }
