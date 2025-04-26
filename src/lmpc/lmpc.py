@@ -64,7 +64,6 @@ class MPC:
     def move_block(self,move):
         LinearMPC.move_block_b(self.jl_mpc,move)
 
-
     # code generation 
     def codegen(self, fname="mpc_workspace", dir="codegen", opt_settings=None, src=True, float_type="double"):
         LinearMPC.codegen(self.jl_mpc,fname=fname,dir=dir,opt_settings=opt_settings,src=src,float_type=float_type)

@@ -1,5 +1,7 @@
-**lmpc** is a Python  package for Model Predictive Control (MPC) of linear systems. It bring the functionality of the Julia package [LinearMPC.jl](https://github.com/darnstrom/LinearMPC.jl) to Python.
-It aims to provide a user-friendy experience, while at the same time being able to generate  _high-performant_ and _lightweight_ C-code that can easily be used on embedded systems. The package supports code generation for the Quadratic Programming solver [DAQP](https://github.com/darnstrom/daqp), and for explicit solutions computed by [ParametricDAQP.jl](https://github.com/darnstrom/ParametricDAQP.jl). 
+**lmpc** is a Python  package for Model Predictive Control (MPC) of linear systems, brining the functionality of the Julia package [LinearMPC.jl](https://github.com/darnstrom/LinearMPC.jl) to Python.
+It aims to provide a user-friendly experience, while simultaneously being able to generate  _high-performant_ and _lightweight_ C-code that can easily be used on embedded systems. The package supports code generation for the Quadratic Programming solver [DAQP](https://github.com/darnstrom/daqp), and for explicit solutions computed by [ParametricDAQP.jl](https://github.com/darnstrom/ParametricDAQP.jl). 
+
+A simplified version (see the, soon to be released, documentation for a more complete formulation) of the solved problem is
 
 $$
 \begin{align}
@@ -43,7 +45,7 @@ u = mpc.compute_control(x=[0,0,0,0],r=[1,0])
 ```
 
 Embeddable C-code for the MPC controller is generated with the command
-``python`
+```python
 mpc.codegen(dir="codgen_dir")
 ```
 which produce _allocation-free_ C-code in the directory `codegen_dir` for setting up optimization problems and solving them with the Quadratic Programming solver [DAQP](https://github.com/darnstrom/daqp).
