@@ -14,6 +14,11 @@ $$
 
 where $\hat{x}$ is the current state and $r$ is the desired reference value of $Cx$.
 
+## Installation
+```bash
+pip install lmpc
+```
+
 ## Example 
 The following code show a simple MPC example of controlling an inverted pendulum on a cart, inspired by [this](https://se.mathworks.com/help/mpc/ug/mpc-control-of-an-inverted-pendulum-on-a-cart.html) example in the Model Predictive Toolbox in MATLAB.
 
