@@ -14,12 +14,14 @@ LinearMPC = jl.LinearMPC
 
 class MPC:
     jl_mpc:AnyValue
-    def __init__(self,F,G,Gd=None,C=None,Dd=None,Ts=1, Np=10, Nc=None):
+    def __init__(self,A,B,Ts=None,Bd=None,Gd=None,C=np.zeros([0,0]),Dd=np.zeros([0,0]),Np=10, Nc=None):
         if Nc is None: Nc = Np
-        self.jl_mpc = LinearMPC.MPC(F,G,Gd=Gd,C=C,Dd=Dd,Ts=Ts,Np=Np,Nc=Nc)
-    def __init__(self,A,B,Ts,Bd=None,C=None,Dd=None,Np=10, Nc=None):
-        if Nc is None: Nc = Np
-        self.jl_mpc = LinearMPC.MPC(A,B,Ts,Bd=Bd,C=C,Dd=Dd,Np=Np,Nc=Nc)
+        if Ts is None or (Gd is not None and Bd is None):# discrete-time system
+            if Gd is None: Gd = np.zeros([0,0]) 
+            self.jl_mpc = LinearMPC.MPC(A,B,1.0,Gd=Gd,C=C,Dd=Dd,Np=Np,Nc=Nc)
+        else:
+            if Bd is None: Bd = np.zeros([0,0]) 
+            self.jl_mpc = LinearMPC.MPC(A,B,Ts,Bd=Bd,C=C,Dd=Dd,Np=Np,Nc=Nc)
 
     def compute_control(self,x,r=None, d=None, uprev=None):
         return  LinearMPC.compute_control(self.jl_mpc, x, r = r, d=d, uprev=uprev)
@@ -45,12 +47,13 @@ class MPC:
         LinearMPC.set_output_bounds_b(self.jl_mpc,ymin=ymin,ymax=ymax, 
                                     ks=ks, soft=soft, binary=binary, prio=prio)
 
-    def set_weights(self, Q=None, R=None ,Rr=None, S=None, rho=None, Qf=None):
-        if Q is not None: Q = np.array(Q)
-        if R is not None: R = np.array(R)
-        if Rr is not None: Rr = np.array(Rr)
-        if Qf is not None: Qf = np.array(Qf)
-        LinearMPC.set_weights_b(self.jl_mpc, Q=Q, R=R, Rr=Rr,S=S, rho=rho, Qf=Qf)
+    def set_weights(self, Q=None, R=None ,Rr=None, S=None, Qf=None):
+        Q  = np.zeros((0,0)) if Q  is None else np.array(Q)
+        R  = np.zeros((0,0)) if R  is None else np.array(R)
+        Rr = np.zeros((0,0)) if Rr is None else np.array(Rr)
+        S  = np.zeros((0,0)) if S  is None else np.array(S)
+        Qf = np.zeros((0,0)) if Qf is None else np.array(Qf)
+        LinearMPC.set_weights_b(self.jl_mpc, Q=Q, R=R, Rr=Rr,S=S,Qf=Qf)
 
     def set_terminal_cost(self):
         LinearMPC.set_terminal_cost(self.jl_mpc)
@@ -68,6 +71,24 @@ class MPC:
     def codegen(self, fname="mpc_workspace", dir="codegen", opt_settings=None, src=True, float_type="double"):
         LinearMPC.codegen(self.jl_mpc,fname=fname,dir=dir,opt_settings=opt_settings,src=src,float_type=float_type)
 
+    # certification
+    def certify(self, range=None, AS0=[], settings=None):
+        return CertificationResult(LinearMPC.certify(self.jl_mpc,range=range,AS0=np.asarray(AS0,dtype=int),settings=None))
+
+    def range(self, xmin=None,xmax=None,rmin=None,rmax=None,dmin=None,dmax=None,umin=None,umax=None):
+        range = LinearMPC.ParameterRange(self.jl_mpc)
+        if xmin is not None: range.xmin[:] = xmin
+        if xmax is not None: range.xmax[:] = xmax
+        if rmin is not None: range.rmin[:] = rmin
+        if rmax is not None: range.rmax[:] = rmax
+        if dmin is not None: range.dmin[:] = dmin
+        if dmax is not None: range.dmax[:] = dmax
+        if dmin is not None: range.umin[:] = umin
+        if dmax is not None: range.umax[:] = umax
+        return range
+
+
+
 # Explicit MPC
 class ExplicitMPC:
     jl_empc:AnyValue
@@ -81,3 +102,34 @@ class ExplicitMPC:
     def plot_feedback(self,u,th1,th2,x=None,r=None,d=None,uprev=None,show_fixed=True, show_zero=False):
         jl.display(LinearMPC.plot_feedback(self.jl_empc,u,th1,th2,x=x,r=r,d=d,uprev=uprev,
                                            show_fixed=show_fixed,show_zero=show_zero))
+
+# Certification 
+class CertificationResult:
+    jl_result:AnyValue
+    def __init__(self,result):
+        self.jl_result = result
+    def plot(self,th1,th2,x=None,r=None,d=None,uprev=None, show_fixed=True,show_zero=False):
+        jl.display(LinearMPC.plot(self.jl_result,th1,th2,x=x,r=r,d=d,uprev=uprev,
+                                  show_fixed=show_fixed,show_zero=show_zero))
+class Simulation:
+    jl_sim:AnyValue
+    ts: np.ndarray
+    ys: np.ndarray
+    us: np.ndarray
+    xs: np.ndarray
+    rs: np.ndarray
+    ds: np.ndarray
+
+    def __init__(self,mpc,f=None,x0= None,N=1000, r=None,d=None):
+        if x0 is None: x0 = np.zeros(mpc.jl_mpc.model.nx)
+        if f  is None: 
+            self.jl_sim = LinearMPC.Simulation(mpc.jl_mpc,x0=x0,N=N,r=r,d=d)
+        else:
+            self.jl_sim = LinearMPC.Simulation(f,mpc.jl_mpc,x0=x0,N=N,r=r,d=d)
+
+        self.ts = np.array(self.jl_sim.ts,copy=False, order='F')
+        self.ys = np.array(self.jl_sim.ys,copy=False, order='F')
+        self.us = np.array(self.jl_sim.us,copy=False, order='F')
+        self.xs = np.array(self.jl_sim.xs,copy=False, order='F')
+        self.rs = np.array(self.jl_sim.rs,copy=False, order='F')
+        self.ds = np.array(self.jl_sim.ds,copy=False, order='F')
