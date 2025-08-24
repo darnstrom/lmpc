@@ -38,7 +38,7 @@ Ts = 0.01
 mpc = MPC(A,B,Ts,C=C,Nc=Nc,Np=Np);
 
 # set the objective functions weights
-mpc.set_weights(Q=[1.44,1],R=[0.0],Rr=[1.0])
+mpc.set_objective(Q=[1.44,1],R=[0.0],Rr=[1.0])
 
 # set actuator limits
 mpc.set_bounds(umin=[-2.0],umax=[2.0])

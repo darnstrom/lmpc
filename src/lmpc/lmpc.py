@@ -30,8 +30,11 @@ class MPC:
     def setup(self):
         LinearMPC.setup_b(self.jl_mpc)
 
-    def set_bounds(self, umin=np.zeros(0), umax=np.zeros(0)):
-        LinearMPC.set_bounds_b(self.jl_mpc, umin = umin, umax = umax)
+    def set_bounds(self, umin=np.zeros(0), umax=np.zeros(0), ymin=np.zeros(0), ymax=np.zeros(0)):
+        LinearMPC.set_bounds_b(self.jl_mpc, umin = umin, umax = umax, ymin = ymin, ymax = ymax)
+
+    def set_input_bounds(self, umin=np.zeros(0), umax=np.zeros(0)):
+        LinearMPC.set_input_bounds_b(self.jl_mpc, umin = umin, umax = umax)
 
     def add_constraint(self,Ax = None, Au= None, 
                         Ar = np.zeros((0,0)), Aw = np.zeros((0,0)), 
@@ -47,12 +50,13 @@ class MPC:
         LinearMPC.set_output_bounds_b(self.jl_mpc,ymin=ymin,ymax=ymax, 
                                     ks=ks, soft=soft, binary=binary, prio=prio)
 
-    def set_weights(self, Q=None, R=None ,Rr=None, S=None, Qf=None):
+    def set_objective(self, Q=None, R=None ,Rr=None, S=None, Qf=None, Qfx=None):
         Q  = np.zeros((0,0)) if Q  is None else np.array(Q)
         R  = np.zeros((0,0)) if R  is None else np.array(R)
         Rr = np.zeros((0,0)) if Rr is None else np.array(Rr)
         S  = np.zeros((0,0)) if S  is None else np.array(S)
         Qf = np.zeros((0,0)) if Qf is None else np.array(Qf)
+        Qfx = np.zeros((0,0)) if Qfx is None else np.array(Qfx)
         LinearMPC.set_weights_b(self.jl_mpc, Q=Q, R=R, Rr=Rr,S=S,Qf=Qf)
 
     def set_terminal_cost(self):
@@ -67,13 +71,23 @@ class MPC:
     def move_block(self,move):
         LinearMPC.move_block_b(self.jl_mpc,move)
 
+    def set_horizon(self,Np):
+        LinearMPC.set_horizon_b(self.jl_mpc,Np)
+
+    def set_binary_controls(self,bin_ids):
+        LinearMPC.set_binary_controls_b(self.jl_mpc,bin_ids)
+
+    def set_disturbance(self,wmin,wmax):
+        LinearMPC.set_distrubance_b(self.jl_mpc,wmin,wmax)
+
     # code generation 
     def codegen(self, fname="mpc_workspace", dir="codegen", opt_settings=None, src=True, float_type="double"):
         LinearMPC.codegen(self.jl_mpc,fname=fname,dir=dir,opt_settings=opt_settings,src=src,float_type=float_type)
 
     # certification
-    def certify(self, range=None, AS0=[], settings=None):
-        return CertificationResult(LinearMPC.certify(self.jl_mpc,range=range,AS0=np.asarray(AS0,dtype=int),settings=None))
+    def certify(self, range=None, AS0=[], single_soft=True):
+        return CertificationResult(LinearMPC.certify(self.jl_mpc,range=range,AS0=np.asarray(AS0,dtype=int),
+                                                     single_soft=single_soft))
 
     def range(self, xmin=None,xmax=None,rmin=None,rmax=None,dmin=None,dmax=None,umin=None,umax=None):
         range = LinearMPC.ParameterRange(self.jl_mpc)
@@ -87,21 +101,44 @@ class MPC:
         if dmax is not None: range.umax[:] = umax
         return range
 
-
+    def mpqp(self, singlesided = False, single_soft = False):
+        mpqp_jl = LinearMPC.mpc2mpqp(self.jl_mpc,singlesided=singlesided, single_soft=single_soft)
+        mpqp = {
+                "jl_src" : mpqp_jl,
+                "H": np.array(mpqp_jl.H,copy=False, order='F'),
+                "f": np.array(mpqp_jl.f,copy=False, order='F'),
+                "f_theta": np.array(mpqp_jl.f_theta,copy=False, order='F'),
+                "H_theta": np.array(mpqp_jl.H_theta,copy=False, order='F'),
+                "A": np.array(mpqp_jl.A,copy=False, order='F'),
+                "W": np.array(mpqp_jl.W,copy=False, order='F'),
+                "senses": np.array(mpqp_jl.senses,copy=False, order='F'),
+                "prio": np.array(mpqp_jl.senses,copy=False, order='F'),
+                "has_binaries": mpqp_jl.has_binaries
+                #"break_points": np.array(mpqp_jl.break_points,copy=False, order='F')
+                }
+        if singlesided:
+            mpqp["b"] = np.array(mpqp_jl.b,copy=False, order='F')
+        else:
+            mpqp["bu"] = np.array(mpqp_jl.bu,copy=False, order='F')
+            mpqp["bl"] = np.array(mpqp_jl.bl,copy=False, order='F')
+        return mpqp
 
 # Explicit MPC
 class ExplicitMPC:
-    jl_empc:AnyValue
+    jl_mpc:AnyValue
     def __init__(self,mpc,range=None,build_tree=False):
-        self.jl_empc = LinearMPC.ExplicitMPC(mpc.jl_mpc,range=range,build_tree=build_tree)
+        self.jl_mpc = LinearMPC.ExplicitMPC(mpc.jl_mpc,range=range,build_tree=build_tree)
 
     def plot_regions(self,th1,th2,x=None,r=None,d=None,uprev=None, show_fixed=True,show_zero=False):
-        jl.display(LinearMPC.plot_regions(self.jl_empc,th1,th2,x=x,r=r,d=d,uprev=uprev,
+        jl.display(LinearMPC.plot_regions(self.jl_mpc,th1,th2,x=x,r=r,d=d,uprev=uprev,
                                           show_fixed=show_fixed,show_zero=show_zero))
 
     def plot_feedback(self,u,th1,th2,x=None,r=None,d=None,uprev=None,show_fixed=True, show_zero=False):
-        jl.display(LinearMPC.plot_feedback(self.jl_empc,u,th1,th2,x=x,r=r,d=d,uprev=uprev,
+        jl.display(LinearMPC.plot_feedback(self.jl_mpc,u,th1,th2,x=x,r=r,d=d,uprev=uprev,
                                            show_fixed=show_fixed,show_zero=show_zero))
+    def codegen(self,fname="empc",dir="codegen", opt_settings=None, src=True, 
+                float_type="double"):
+        LinearMPC.codegen(self.jl_mpc,fname=fname,dir=dir,opt_settings=opt_settings,src=src,float_type=float_type)
 
 # Certification 
 class CertificationResult:
@@ -119,6 +156,7 @@ class Simulation:
     xs: np.ndarray
     rs: np.ndarray
     ds: np.ndarray
+    solve_times: np.ndarray
 
     def __init__(self,mpc,f=None,x0= None,N=1000, r=None,d=None):
         if x0 is None: x0 = np.zeros(mpc.jl_mpc.model.nx)
@@ -133,3 +171,4 @@ class Simulation:
         self.xs = np.array(self.jl_sim.xs,copy=False, order='F')
         self.rs = np.array(self.jl_sim.rs,copy=False, order='F')
         self.ds = np.array(self.jl_sim.ds,copy=False, order='F')
+        self.solve_times= np.array(self.jl_sim.solve_times,copy=False, order='F')
