@@ -16,10 +16,12 @@ mpc.set_objective(Q=[1.0,10000.0],R=[1000.0],Rr=[1.0])
 
 # Compute control
 mpc.compute_control([1,1])
+mpc.move_block([2,5])
 
 # Generate mpQP
 print(mpc.mpqp())
 print(mpc.mpqp(singlesided=True))
+
 # Setup
 mpc.codegen()
 
