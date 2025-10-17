@@ -1,6 +1,6 @@
 [project]
 name = "lmpc"
-version = "0.4.0"
+version = "0.4.1"
 description = "A Python package for Linear Model Predictive Control, with generation of high-performant and embeddable code."
 readme = "README.md"
 authors = [

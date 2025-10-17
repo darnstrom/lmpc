@@ -18,7 +18,7 @@ class MPC:
         if Nc is None: Nc = Np
         if Ts is None or (Gd is not None and Bd is None):# discrete-time system
             if Gd is None: Gd = np.zeros([0,0]) 
-            self.jl_mpc = LinearMPC.MPC(A,B,1.0,Gd=Gd,C=C,Dd=Dd,Np=Np,Nc=Nc)
+            self.jl_mpc = LinearMPC.MPC(A,B,Gd=Gd,C=C,Dd=Dd,Np=Np,Nc=Nc)
         else:
             if Bd is None: Bd = np.zeros([0,0]) 
             self.jl_mpc = LinearMPC.MPC(A,B,Ts,Bd=Bd,C=C,Dd=Dd,Np=Np,Nc=Nc)
