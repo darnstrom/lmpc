@@ -28,8 +28,6 @@ mpc.codegen()
 # Explicit MPC
 parameters = mpc.range(xmin=[-5,-5],xmax=[5,5],rmin=[-1,-1],rmax=[1,1])
 empc = ExplicitMPC(mpc,range=parameters)
-empc.plot_regions("x1","x2")
-empc.plot_feedback("u1","x1","x2")
 empc.codegen()
 
 # Certification
