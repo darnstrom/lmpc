@@ -12,26 +12,30 @@ jobs:
     permissions:
       contents: read
 
-    steps:
+		steps:
       - uses: actions/checkout@v4
 
       - name: Set up Julia
         uses: julia-actions/setup-julia@v2
         with:
-          version: "1"
+          version: "1.10" # Explicitly use the stable LTS
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.x"
+          python-version: "3.12"
 
-      - name: Install package and test dependencies
+      - name: Install dependencies
         run: pip install . pytest
 
-      - name: Set up Julia environment
-        run: PYTHON_JULIAPKG_EXE=$(which julia) python -c "import juliacall"
+      - name: Initialize Julia via Python
+        run: python -c "import juliacall"
+        env:
+          # This tells juliapkg: "Don't download Julia, use the one I just installed"
+          PYTHON_JULIAPKG_EXE: julia 
 
       - name: Run tests
         run: pytest tests/
         env:
+          PYTHON_JULIAPKG_EXE: julia
           PYTHON_JULIAPKG_OFFLINE: "yes"
