@@ -32,7 +32,7 @@ class MPC:
             self.jl_mpc = LinearMPC.MPC(A,B,Ts,Bd=Bd,C=C,Dd=Dd,Np=Np,Nc=Nc)
 
     def compute_control(self,x,r=None, d=None, uprev=None, l=None):
-        return  LinearMPC.compute_control(self.jl_mpc, x, r = r, d=d, uprev=uprev, l=None)
+        return  LinearMPC.compute_control(self.jl_mpc, x, r = r, d=d, uprev=uprev, l=l)
     
     # Setting up problem 
     def setup(self):
@@ -73,7 +73,7 @@ class MPC:
                                     Q=Q, R=R, Rr=Rr,S=S,Qf=Qf)
 
     def set_terminal_cost(self):
-        LinearMPC.set_terminal_cost(self.jl_mpc)
+        LinearMPC.set_terminal_cost_b(self.jl_mpc)
 
     def set_prestabilizing_feedback(self, K=None):
         if K is not None:
@@ -86,7 +86,7 @@ class MPC:
             LinearMPC.move_block_b(self.jl_mpc,move)
         else:
             if any(isinstance(i, list) for i in move):
-                jl_move = jl.Vector([jl.Vector[jl.Int](mb) for mb in move])
+                jl_move = jl.Vector[jl.Vector[jl.Int]]([jl.Vector[jl.Int](mb) for mb in move])
             else:
                 jl_move = jl.Vector[jl.Int](move)
             LinearMPC.move_block_b(self.jl_mpc,jl_move)
