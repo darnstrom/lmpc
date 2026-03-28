@@ -17,10 +17,8 @@ LinearMPC = jl.LinearMPC
 _jl_callable_wrapper = jl.seval(
     "py_f -> (args...) -> pyconvert(Vector{Float64}, py_f(args...))"
 )
-
 def _wrap_python_callable(f):
     return _jl_callable_wrapper(f)
-
 
 class MPC:
     jl_mpc:AnyValue
