@@ -20,18 +20,15 @@ jobs:
         with:
           version: "1"
 
-      - name: Install LinearMPC.jl
-        run: julia -e 'using Pkg; Pkg.add("LinearMPC")'
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.x"
 
       - name: Install package and test dependencies
-        run: pip install . pytest
-        env:
-          PYTHON_JULIAPKG_OFFLINE: "yes"
+        run: |
+          export PYTHON_JULIAPKG_EXE=$(which julia)
+          pip install . pytest
 
       - name: Run tests
         run: pytest tests/
