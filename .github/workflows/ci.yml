@@ -26,9 +26,10 @@ jobs:
           python-version: "3.x"
 
       - name: Install package and test dependencies
-        run: |
-          export PYTHON_JULIAPKG_EXE=$(which julia)
-          pip install . pytest
+        run: pip install . pytest
+
+      - name: Set up Julia environment
+        run: PYTHON_JULIAPKG_EXE=$(which julia) python -c "import juliacall"
 
       - name: Run tests
         run: pytest tests/
