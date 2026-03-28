@@ -59,9 +59,9 @@ class MPC:
                                     ks=ks, soft=soft, binary=binary, prio=prio)
 
     def set_objective(self, uids=None, Q=None, R=None ,Rr=None, S=None, Qf=None, Qfx=None):
-        Q  = np.zeros((0,0)) if Q  is None else np.array(Q)
-        R  = np.zeros((0,0)) if R  is None else np.array(R)
-        Rr = np.zeros((0,0)) if Rr is None else np.array(Rr)
+        Q  = np.zeros((0,0)) if Q  is None else Q if np.isscalar(Q) else np.array(Q)
+        R  = np.zeros((0,0)) if R  is None else R if np.isscalar(R) else np.array(R)
+        Rr = np.zeros((0,0)) if Rr is None else Rr if np.isscalar(Rr) else np.array(Rr)
         S  = np.zeros((0,0)) if S  is None else np.array(S)
         Qf = np.zeros((0,0)) if Qf is None else np.array(Qf)
         Qfx = np.zeros((0,0)) if Qfx is None else np.array(Qfx)
