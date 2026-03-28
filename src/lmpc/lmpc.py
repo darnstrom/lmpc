@@ -11,6 +11,14 @@ jl_version = (jl.VERSION.major, jl.VERSION.minor, jl.VERSION.patch)
 jl.seval("using LinearMPC")
 LinearMPC = jl.LinearMPC
 
+# Julia wrapper factory: converts a Python callable into a Julia Function.
+# The wrapper calls the Python function with the given arguments and converts
+# the returned Python array into a Julia Vector{Float64}.
+_jl_callable_wrapper = jl.seval(
+    "py_f -> (args...) -> pyconvert(Vector{Float64}, py_f(args...))"
+)
+def _wrap_python_callable(f):
+    return _jl_callable_wrapper(f)
 
 class MPC:
     jl_mpc:AnyValue
@@ -195,7 +203,8 @@ class Simulation:
         if f  is None: 
             self.jl_sim = LinearMPC.Simulation(mpc.jl_mpc,x0=x0,N=N,r=r,d=d,l=l)
         else:
-            self.jl_sim = LinearMPC.Simulation(f,mpc.jl_mpc,x0=x0,N=N,r=r,d=d,l=l)
+            jl_f = _wrap_python_callable(f) if callable(f) else f
+            self.jl_sim = LinearMPC.Simulation(jl_f,mpc.jl_mpc,x0=x0,N=N,r=r,d=d,l=l)
 
         self.ts = np.array(self.jl_sim.ts,copy=False, order='F')
         self.ys = np.array(self.jl_sim.ys,copy=False, order='F')
