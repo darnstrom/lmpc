@@ -116,7 +116,7 @@ class MPC:
     def set_state(self,x0):
         return LinearMPC.set_state_b(self.jl_mpc,x0)
     def correct_state(self,y):
-        return return LinearMPC.correct_state_b(self.jl_mpc,y)
+        return LinearMPC.correct_state_b(self.jl_mpc,y)
     def predict_state(self,u):
         return LinearMPC.predict_state_b(self.jl_mpc,u)
 
