@@ -5,7 +5,7 @@ https://github.com/darnstrom/LinearMPC.jl/blob/main/test/runtests.jl
 
 import numpy as np
 import pytest
-from lmpc import MPC, ExplicitMPC, Simulation
+from lmpc import MPC, ExplicitMPC, Simulation, Model, ParameterRange, mpc_examples
 from juliacall import Main as jl
 
 # Access the underlying Julia LinearMPC module (already loaded by the lmpc import).
@@ -594,3 +594,178 @@ class TestEvaluateRunningCost:
         sim = LinearMPC.Simulation(jl_mpc, x0=x0, N=N_sim, r=rs)
         cost = LinearMPC.evaluate_cost(jl_mpc, sim)
         assert float(cost) > 0
+
+
+# ---------------------------------------------------------------------------
+# Python mpc_examples, ParameterRange, and Model wrappers
+# ---------------------------------------------------------------------------
+class TestMPCExamplesPython:
+    def test_returns_python_mpc_and_range(self):
+        """mpc_examples() should return a Python MPC and a Python ParameterRange."""
+        mpc, pr = mpc_examples("invpend")
+        assert isinstance(mpc, MPC)
+        assert isinstance(pr, ParameterRange)
+
+    def test_compute_control_on_example(self):
+        """compute_control on the Python-wrapped invpend example should match reference."""
+        mpc, _ = mpc_examples("invpend")
+        u = mpc.compute_control([5.0, 5, 0, 0])
+        assert abs(float(u[0]) - 1.7612519326) < 1e-6
+
+    def test_mpc_examples_with_np_nc(self):
+        """mpc_examples with explicit Np/Nc returns valid Python objects."""
+        mpc, pr = mpc_examples("aircraft", Np=10, Nc=2)
+        assert isinstance(mpc, MPC)
+        assert isinstance(pr, ParameterRange)
+
+    def test_mpc_examples_with_params(self):
+        """mpc_examples with params dict returns valid Python objects."""
+        mpc, pr = mpc_examples("chained", Np=10, Nc=10, params={"nx": 2})
+        assert isinstance(mpc, MPC)
+        assert isinstance(pr, ParameterRange)
+
+
+class TestParameterRange:
+    def test_range_method_returns_python_range(self):
+        """MPC.range() should return a Python ParameterRange."""
+        A = np.array([[0.0, 1], [10, 0]])
+        B = np.array([[0.0], [1]])
+        mpc = MPC(A, B, 0.1, Np=5)
+        pr = mpc.range(xmin=[-5, -5], xmax=[5, 5])
+        assert isinstance(pr, ParameterRange)
+
+    def test_range_fields_readable(self):
+        """ParameterRange fields returned by mpc_examples should be readable."""
+        _, pr = mpc_examples("invpend")
+        xmin = np.array(pr.xmin)
+        xmax = np.array(pr.xmax)
+        assert xmin.shape == (4,)
+        assert xmax.shape == (4,)
+
+    def test_explicit_mpc_with_python_range(self):
+        """ExplicitMPC should accept a Python ParameterRange and give correct control."""
+        mpc, pr = mpc_examples("invpend")
+        empc = ExplicitMPC(mpc, range=pr)
+        LinearMPC.build_tree_b(empc.jl_mpc)
+        u = LinearMPC.compute_control(empc.jl_mpc, [5.0, 5, 0, 0])
+        assert abs(float(u[0]) - 1.7612519326) < 1e-6
+
+    def test_certify_with_python_range(self):
+        """MPC.certify() should accept a Python ParameterRange."""
+        mpc, pr = mpc_examples("invpend")
+        result = mpc.certify(range=pr)
+        assert result.jl_result is not None
+
+    def test_range_method_umin_umax(self):
+        """MPC.range() should correctly apply umin/umax (regression for guard bug)."""
+        A = np.array([[0.0, 1], [10, 0]])
+        B = np.array([[0.0], [1]])
+        mpc = MPC(A, B, 0.1, Np=5)
+        mpc.set_bounds(umin=[-1.0], umax=[1.0])
+        pr = mpc.range(xmin=[-5, -5], xmax=[5, 5], umin=[-0.5], umax=[0.5])
+        assert float(pr.umin[0]) == pytest.approx(-0.5)
+        assert float(pr.umax[0]) == pytest.approx(0.5)
+
+
+class TestModel:
+    def test_model_linear_dt(self):
+        """Model with DT linear matrices should produce a valid MPC."""
+        F = np.array([[1.0, 0.1], [0.0, 1.0]])
+        G = np.array([[0.0], [0.1]])
+        model = Model(F, G)
+        mpc = MPC(model, Np=5)
+        mpc.set_bounds(umin=[-1.0], umax=[1.0])
+        u = mpc.compute_control(np.array([1.0, 0.0]))
+        assert len(u) == 1
+
+    def test_model_linear_ct(self):
+        """Model with CT (A, B, Ts) should produce a valid MPC after ZOH."""
+        A = np.array([[0.0, 1], [0, 0]])
+        B = np.array([[0.0], [1]])
+        model = Model(A, B, 0.1)
+        mpc = MPC(model, Np=5)
+        mpc.set_bounds(umin=[-1.0], umax=[1.0])
+        u = mpc.compute_control(np.array([1.0, 0.0]))
+        assert len(u) == 1
+
+    def test_model_nonlinear_dt(self):
+        """Model with DT nonlinear callables should linearise and compute control."""
+        F = np.array([[1.0, 0.1], [0.0, 1.0]])
+        G = np.array([[0.0], [0.1]])
+
+        # Express the linear system as nonlinear functions (result must match)
+        def f(x, u, d):
+            x = np.asarray(x, dtype=float)
+            u = np.asarray(u, dtype=float)
+            return F @ x + G @ u
+
+        def h(x, u, d):
+            return np.asarray(x, dtype=float).copy()
+
+        xo = np.zeros(2)
+        uo = np.zeros(1)
+        model = Model(f, h, xo, uo)   # DT nonlinear (no Ts)
+        mpc = MPC(model, Np=5)
+        mpc.set_bounds(umin=[-1.0], umax=[1.0])
+        u = mpc.compute_control(np.array([1.0, 0.0]))
+        assert len(u) == 1
+
+    def test_model_nonlinear_ct(self):
+        """Model with CT nonlinear callables uses ZOH and gives valid control."""
+        A_ct = np.array([[0.0, 1], [0, 0]])
+        B_ct = np.array([[0.0], [1]])
+
+        def f(x, u, d):
+            x = np.asarray(x, dtype=float)
+            u = np.asarray(u, dtype=float)
+            return A_ct @ x + B_ct @ u   # ẋ = Ax + Bu
+
+        def h(x, u, d):
+            return np.asarray(x, dtype=float).copy()
+
+        xo = np.zeros(2)
+        uo = np.zeros(1)
+        model = Model(f, h, xo, uo, Ts=0.1)   # CT nonlinear
+        mpc = MPC(model, Np=5)
+        mpc.set_bounds(umin=[-1.0], umax=[1.0])
+        u = mpc.compute_control(np.array([1.0, 0.0]))
+        assert len(u) == 1
+
+    def test_model_nonlinear_dt_simulation(self):
+        """Simulation with a nonlinear DT Model uses true dynamics and converges."""
+        F = np.array([[1.0, 0.1], [0.0, 1.0]])
+        G = np.array([[0.0], [0.1]])
+
+        def f(x, u, d):
+            x = np.asarray(x, dtype=float)
+            u = np.asarray(u, dtype=float)
+            return F @ x + G @ u
+
+        def h(x, u, d):
+            return np.asarray(x, dtype=float).copy()
+
+        model = Model(f, h, np.zeros(2), np.zeros(1))
+        mpc = MPC(model, Np=10)
+        mpc.set_objective(Q=[1.0, 1.0], R=[0.1])
+        mpc.set_bounds(umin=[-2.0], umax=[2.0])
+
+        sim = Simulation(mpc, x0=np.array([1.0, 0.0]), r=np.zeros(2), N=50)
+        # Should converge to origin
+        assert np.linalg.norm(sim.xs[:, -1]) < 1e-2
+
+    def test_mpc_from_model_matches_matrices(self):
+        """MPC built from a Model should give same control as one built from matrices."""
+        F = np.array([[1.0, 0.1], [0.0, 1.0]])
+        G = np.array([[0.0], [0.1]])
+
+        mpc_mat = MPC(F, G, Np=5)
+        mpc_mat.set_bounds(umin=[-1.0], umax=[1.0])
+
+        model = Model(F, G)
+        mpc_mod = MPC(model, Np=5)
+        mpc_mod.set_bounds(umin=[-1.0], umax=[1.0])
+
+        x0 = np.array([1.0, 0.5])
+        u_mat = mpc_mat.compute_control(x0)
+        u_mod = mpc_mod.compute_control(x0)
+        assert np.linalg.norm(np.array(u_mat) - np.array(u_mod)) < 1e-10

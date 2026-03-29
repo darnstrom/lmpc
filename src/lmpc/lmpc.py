@@ -20,16 +20,183 @@ _jl_callable_wrapper = jl.seval(
 def _wrap_python_callable(f):
     return _jl_callable_wrapper(f)
 
+# Julia helper: build a LinearMPC.Model from Python nonlinear callables using
+# finite-difference linearisation (avoids the ForwardDiff / Dual-number issue).
+_jl_model_from_python = jl.seval("""
+let
+    function(py_f, py_h, xo, uo, Ts; d = zeros(0))
+        eps_fd = 1e-6
+        nx, nu, nd = length(xo), length(uo), length(d)
+
+        # Julia closures that call back into Python (work with Float64 only)
+        f  = (x, u, dv) -> pyconvert(Vector{Float64}, py_f(x, u, dv))
+        h  = (x, u, dv) -> pyconvert(Vector{Float64}, py_h(x, u, dv))
+
+        # ---- numerical Jacobians of f ----
+        f0 = f(xo, uo, d)
+        A_jac = zeros(nx, nx)
+        for i in 1:nx
+            xp = copy(xo); xp[i] += eps_fd
+            A_jac[:, i] = (f(xp, uo, d) - f0) / eps_fd
+        end
+        B_jac = zeros(nx, nu)
+        for i in 1:nu
+            up = copy(uo); up[i] += eps_fd
+            B_jac[:, i] = (f(xo, up, d) - f0) / eps_fd
+        end
+        Bd_jac = zeros(nx, nd)
+        for i in 1:nd
+            dp = copy(d); dp[i] += eps_fd
+            Bd_jac[:, i] = (f(xo, uo, dp) - f0) / eps_fd
+        end
+        f_offset = f0 - A_jac * xo - B_jac * uo - Bd_jac * d
+
+        # ---- numerical Jacobians of h ----
+        h0 = h(xo, uo, d)
+        ny = length(h0)
+        C_jac = zeros(ny, nx)
+        for i in 1:nx
+            xp = copy(xo); xp[i] += eps_fd
+            C_jac[:, i] = (h(xp, uo, d) - h0) / eps_fd
+        end
+        Dd_jac = zeros(ny, nd)
+        for i in 1:nd
+            dp = copy(d); dp[i] += eps_fd
+            Dd_jac[:, i] = (h(xo, uo, dp) - h0) / eps_fd
+        end
+        h_offset = h0 - C_jac * xo - Dd_jac * d
+
+        if Ts > 0
+            # Continuous-time nonlinear -> linearise then discretise via ZOH
+            return LinearMPC.Model(A_jac, B_jac, float(Ts);
+                                   Bd = Bd_jac, C = C_jac, Dd = Dd_jac,
+                                   f_offset = f_offset, h_offset = h_offset,
+                                   xo = xo, uo = uo,
+                                   true_dynamics = f, true_h = h)
+        else
+            # Discrete-time nonlinear: Jacobians ARE the DT system matrices
+            return LinearMPC.Model(A_jac, B_jac;
+                                   Gd = Bd_jac, C = C_jac, Dd = Dd_jac,
+                                   f_offset = f_offset, h_offset = h_offset,
+                                   xo = xo, uo = uo,
+                                   true_dynamics = f, true_h = h)
+        end
+    end
+end
+""")
+
+
+class ParameterRange:
+    """Python wrapper for Julia LinearMPC.ParameterRange.
+
+    Instances are returned by :meth:`MPC.range` and by :func:`mpc_examples`,
+    and can be passed directly to :class:`ExplicitMPC` and :meth:`MPC.certify`.
+    Fields (``xmin``, ``xmax``, ``rmin``, ``rmax``, ``dmin``, ``dmax``,
+    ``umin``, ``umax``, ``lmin``, ``lmax``) are Julia arrays that support
+    in-place slice assignment, e.g. ``pr.xmin[:] = [-5, -5]``.
+    """
+    jl_range: AnyValue
+
+    def __init__(self, jl_range):
+        self.jl_range = jl_range
+
+    @property
+    def xmin(self): return self.jl_range.xmin
+    @property
+    def xmax(self): return self.jl_range.xmax
+    @property
+    def rmin(self): return self.jl_range.rmin
+    @property
+    def rmax(self): return self.jl_range.rmax
+    @property
+    def dmin(self): return self.jl_range.dmin
+    @property
+    def dmax(self): return self.jl_range.dmax
+    @property
+    def umin(self): return self.jl_range.umin
+    @property
+    def umax(self): return self.jl_range.umax
+    @property
+    def lmin(self): return self.jl_range.lmin
+    @property
+    def lmax(self): return self.jl_range.lmax
+
+
+class Model:
+    """Python wrapper for Julia LinearMPC.Model.
+
+    Supports three construction modes:
+
+    **Nonlinear dynamics** (Python callables)::
+
+        model = Model(f, h, xo, uo)        # discrete-time
+        model = Model(f, h, xo, uo, Ts)    # continuous-time (ZOH discretised)
+
+    where ``f(x, u, d) -> array`` gives the next state (DT) or the state
+    derivative (CT), and ``h(x, u, d) -> array`` gives the output.
+    Linearisation is performed numerically (finite differences) at the
+    operating point ``(xo, uo)``.
+
+    **Linear discrete-time matrices**::
+
+        model = Model(F, G)
+        model = Model(F, G, Gd=Gd, C=C, Dd=Dd, Ts=Ts)
+
+    **Linear continuous-time matrices** (ZOH discretised)::
+
+        model = Model(A, B, Ts)
+        model = Model(A, B, Ts, Bd=Bd, C=C, Dd=Dd)
+    """
+    jl_model: AnyValue
+
+    def __init__(self, F_or_f, G_or_h=None, Ts_or_xo=None, uo=None, Ts=None,
+                 Bd=None, Gd=None, C=np.zeros([0, 0]), Dd=np.zeros([0, 0]),
+                 f_offset=np.zeros(0), h_offset=np.zeros(0),
+                 xo=np.zeros(0), d=None):
+        if callable(F_or_f):
+            # --- Nonlinear: Model(f, h, xo, uo[, Ts]) ---
+            f, h = F_or_f, G_or_h
+            xo_val = np.asarray(Ts_or_xo, dtype=float)
+            uo_val = np.asarray(uo, dtype=float)
+            Ts_val = float(Ts) if Ts is not None else -1.0
+            d_val  = np.zeros(0) if d is None else np.asarray(d, dtype=float)
+            self.jl_model = _jl_model_from_python(f, h, xo_val, uo_val, Ts_val,
+                                                   d=d_val)
+        elif Ts_or_xo is not None and np.isscalar(Ts_or_xo):
+            # --- CT linear: Model(A, B, Ts, Bd=..., C=..., Dd=...) ---
+            Bd_val = np.zeros([0, 0]) if Bd is None else np.asarray(Bd, dtype=float)
+            self.jl_model = LinearMPC.Model(
+                np.asarray(F_or_f, dtype=float),
+                np.asarray(G_or_h, dtype=float),
+                float(Ts_or_xo),
+                Bd=Bd_val, C=C, Dd=Dd,
+                f_offset=f_offset, h_offset=h_offset, xo=xo)
+        else:
+            # --- DT linear: Model(F, G, Gd=..., C=..., Dd=..., Ts=...) ---
+            Gd_val = np.zeros([0, 0]) if Gd is None else np.asarray(Gd, dtype=float)
+            kw = dict(Gd=Gd_val, C=C, Dd=Dd,
+                      f_offset=f_offset, h_offset=h_offset, xo=xo)
+            if Ts is not None:
+                kw['Ts'] = float(Ts)
+            self.jl_model = LinearMPC.Model(
+                np.asarray(F_or_f, dtype=float),
+                np.asarray(G_or_h, dtype=float),
+                **kw)
+
+
 class MPC:
     jl_mpc:AnyValue
-    def __init__(self,A,B,Ts=None,Bd=None,Gd=None,C=np.zeros([0,0]),Dd=np.zeros([0,0]),Np=10, Nc=None):
+    def __init__(self, A_or_model, B=None, Ts=None, Bd=None, Gd=None,
+                 C=np.zeros([0,0]), Dd=np.zeros([0,0]), Np=10, Nc=None):
         if Nc is None: Nc = Np
-        if Ts is None or (Gd is not None and Bd is None):# discrete-time system
+        if isinstance(A_or_model, Model):
+            self.jl_mpc = LinearMPC.MPC(A_or_model.jl_model, Np=Np, Nc=Nc)
+        elif Ts is None or (Gd is not None and Bd is None):# discrete-time system
             if Gd is None: Gd = np.zeros([0,0]) 
-            self.jl_mpc = LinearMPC.MPC(A,B,Gd=Gd,C=C,Dd=Dd,Np=Np,Nc=Nc)
+            self.jl_mpc = LinearMPC.MPC(A_or_model,B,Gd=Gd,C=C,Dd=Dd,Np=Np,Nc=Nc)
         else:
             if Bd is None: Bd = np.zeros([0,0]) 
-            self.jl_mpc = LinearMPC.MPC(A,B,Ts,Bd=Bd,C=C,Dd=Dd,Np=Np,Nc=Nc)
+            self.jl_mpc = LinearMPC.MPC(A_or_model,B,Ts,Bd=Bd,C=C,Dd=Dd,Np=Np,Nc=Nc)
 
     def compute_control(self,x,r=None, d=None, uprev=None, l=None):
         return  LinearMPC.compute_control(self.jl_mpc, x, r = r, d=d, uprev=uprev, l=l)
@@ -138,20 +305,22 @@ class MPC:
 
     # certification
     def certify(self, range=None, AS0=[], single_soft=True):
-        return CertificationResult(LinearMPC.certify(self.jl_mpc,range=range,AS0=np.asarray(AS0,dtype=int),
+        jl_range = range.jl_range if isinstance(range, ParameterRange) else range
+        return CertificationResult(LinearMPC.certify(self.jl_mpc, range=jl_range,
+                                                     AS0=np.asarray(AS0,dtype=int),
                                                      single_soft=single_soft))
 
     def range(self, xmin=None,xmax=None,rmin=None,rmax=None,dmin=None,dmax=None,umin=None,umax=None):
-        range = LinearMPC.ParameterRange(self.jl_mpc)
-        if xmin is not None: range.xmin[:] = xmin
-        if xmax is not None: range.xmax[:] = xmax
-        if rmin is not None: range.rmin[:] = rmin
-        if rmax is not None: range.rmax[:] = rmax
-        if dmin is not None: range.dmin[:] = dmin
-        if dmax is not None: range.dmax[:] = dmax
-        if dmin is not None: range.umin[:] = umin
-        if dmax is not None: range.umax[:] = umax
-        return range
+        jl_range = LinearMPC.ParameterRange(self.jl_mpc)
+        if xmin is not None: jl_range.xmin[:] = xmin
+        if xmax is not None: jl_range.xmax[:] = xmax
+        if rmin is not None: jl_range.rmin[:] = rmin
+        if rmax is not None: jl_range.rmax[:] = rmax
+        if dmin is not None: jl_range.dmin[:] = dmin
+        if dmax is not None: jl_range.dmax[:] = dmax
+        if umin is not None: jl_range.umin[:] = umin
+        if umax is not None: jl_range.umax[:] = umax
+        return ParameterRange(jl_range)
 
     def mpqp(self, singlesided = False, single_soft = True):
         mpqp_jl = LinearMPC.mpc2mpqp(self.jl_mpc)
@@ -181,7 +350,8 @@ class MPC:
 class ExplicitMPC:
     jl_mpc:AnyValue
     def __init__(self,mpc,range=None,build_tree=False):
-        self.jl_mpc = LinearMPC.ExplicitMPC(mpc.jl_mpc,range=range,build_tree=build_tree)
+        jl_range = range.jl_range if isinstance(range, ParameterRange) else range
+        self.jl_mpc = LinearMPC.ExplicitMPC(mpc.jl_mpc,range=jl_range,build_tree=build_tree)
 
     def codegen(self,fname="empc",dir="codegen", opt_settings=None, src=True, 
                 float_type="double"):
@@ -219,6 +389,48 @@ class Simulation:
         self.xs = np.array(self.jl_sim.xs,copy=False, order='F')
         self.rs = np.array(self.jl_sim.rs,copy=False, order='F')
         self.ds = np.array(self.jl_sim.ds,copy=False, order='F')
-        self.ds = np.array(self.jl_sim.xhats,copy=False, order='F')
-        self.ds = np.array(self.jl_sim.yms,copy=False, order='F')
+        self.xhats = np.array(self.jl_sim.xhats,copy=False, order='F')
+        self.yms = np.array(self.jl_sim.yms,copy=False, order='F')
         self.solve_times= np.array(self.jl_sim.solve_times,copy=False, order='F')
+
+
+def mpc_examples(name, Np=None, Nc=None, params=None, settings=None):
+    """Load a named MPC example, returning a Python ``(MPC, ParameterRange)`` tuple.
+
+    Wraps ``LinearMPC.mpc_examples`` so that results are ready-to-use Python
+    objects.  All keyword arguments are forwarded to the Julia function.
+
+    Parameters
+    ----------
+    name : str
+        Example name (e.g. ``"invpend"``, ``"aircraft"``, ``"dcmotor"``).
+    Np : int, optional
+        Prediction horizon.  Uses the Julia default when omitted.
+    Nc : int, optional
+        Control horizon.  Defaults to *Np* when omitted.
+    params : dict, optional
+        Extra parameters forwarded to Julia (e.g. ``{"nx": 2}``).
+    settings : optional
+        Julia ``MPCSettings`` object forwarded verbatim.
+
+    Returns
+    -------
+    mpc : MPC
+    parameter_range : ParameterRange
+    """
+    kwargs = {}
+    if settings is not None:
+        kwargs['settings'] = settings
+    if params is not None:
+        kwargs['params'] = params
+
+    if Np is not None and Nc is not None:
+        jl_mpc, jl_range = LinearMPC.mpc_examples(name, Np, Nc, **kwargs)
+    elif Np is not None:
+        jl_mpc, jl_range = LinearMPC.mpc_examples(name, Np, **kwargs)
+    else:
+        jl_mpc, jl_range = LinearMPC.mpc_examples(name, **kwargs)
+
+    mpc = MPC.__new__(MPC)
+    mpc.jl_mpc = jl_mpc
+    return mpc, ParameterRange(jl_range)
