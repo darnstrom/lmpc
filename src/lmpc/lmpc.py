@@ -108,11 +108,18 @@ class MPC:
 
     def set_state_observer(self,F=None,G=None,Gd=None,C=None,Dd=None,
                            f_offset=None,h_offset=None,Q=None,R=None,x0=None):
-        print(Q)
-        print(R)
         LinearMPC.set_state_observer_b(self.jl_mpc, F=F,G=G,Gd=Gd,C=C,Dd=Dd,
                                        f_offset=f_offset,h_offset=h_offset,
                                        Q=Q,R=R,x0=x0)
+    def get_state(self):
+        return LinearMPC.get_state(self.jl_mpc)
+    def set_state(self,x0):
+        return LinearMPC.set_state_b(self.jl_mpc,x0)
+    def correct_state(self,y):
+        return LinearMPC.correct_state_b(self.jl_mpc,y)
+    def predict_state(self,u):
+        return LinearMPC.predict_state_b(self.jl_mpc,u)
+
 
     def set_operating_point(self,xo=None,uo=None,relinearize=True):
         LinearMPC.set_operating_point_b(self.jl_mpc,xo=xo,uo=uo,relinearize=relinearize)
