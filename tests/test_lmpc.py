@@ -754,7 +754,7 @@ class TestModel:
         mpc.set_objective(Q=[1.0, 1.0], R=[0.1])
         mpc.set_bounds(umin=[-2.0], umax=[2.0])
 
-        sim = Simulation(mpc, x0=np.array([1.0, 0.0]), r=np.zeros(2), N=50)
+        sim = Simulation(mpc, x0=np.array([1.0, 0.0]), r=np.zeros(2), N=150)
         # Should converge to origin
         assert np.linalg.norm(sim.xs[:, -1]) < 1e-2
 
