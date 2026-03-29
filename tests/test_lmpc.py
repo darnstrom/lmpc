@@ -665,6 +665,7 @@ class TestParameterRange:
         A = np.array([[0.0, 1], [10, 0]])
         B = np.array([[0.0], [1]])
         mpc = MPC(A, B, 0.1, Np=5)
+        mpc.set_objective(Rr=1)
         mpc.set_bounds(umin=[-1.0], umax=[1.0])
         pr = mpc.range(xmin=[-5, -5], xmax=[5, 5], umin=[-0.5], umax=[0.5])
         assert float(pr.umin[0]) == pytest.approx(-0.5)
