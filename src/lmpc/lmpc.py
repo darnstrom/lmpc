@@ -20,71 +20,68 @@ _jl_callable_wrapper = jl.seval(
 def _wrap_python_callable(f):
     return _jl_callable_wrapper(f)
 
-# Julia helper: build a LinearMPC.Model from Python nonlinear callables using
-# finite-difference linearisation (avoids the ForwardDiff / Dual-number issue).
-_jl_model_from_python = jl.seval("""
-let
-    function(py_f, py_h, xo, uo, Ts; d = zeros(0))
-        # eps_fd = 1e-6 is a standard step for double-precision finite differences
-        eps_fd = 1e-6
-        nx, nu, nd = length(xo), length(uo), length(d)
+# Standard step for double-precision finite-difference linearisation.
+_LINEARIZATION_EPS = 1e-6
 
-        # Julia closures that call back into Python (work with Float64 only)
-        f  = (x, u, dv) -> pyconvert(Vector{Float64}, py_f(x, u, dv))
-        h  = (x, u, dv) -> pyconvert(Vector{Float64}, py_h(x, u, dv))
 
-        # ---- numerical Jacobians of f ----
-        f0 = f(xo, uo, d)
-        A_jac = zeros(nx, nx)
-        for i in 1:nx
-            xp = copy(xo); xp[i] += eps_fd
-            A_jac[:, i] = (f(xp, uo, d) - f0) / eps_fd
-        end
-        B_jac = zeros(nx, nu)
-        for i in 1:nu
-            up = copy(uo); up[i] += eps_fd
-            B_jac[:, i] = (f(xo, up, d) - f0) / eps_fd
-        end
-        Bd_jac = zeros(nx, nd)
-        for i in 1:nd
-            dp = copy(d); dp[i] += eps_fd
-            Bd_jac[:, i] = (f(xo, uo, dp) - f0) / eps_fd
-        end
-        f_offset = f0 - A_jac * xo - B_jac * uo - Bd_jac * d
+def _linearize_python_callables(f, h, xo, uo, d):
+    """Finite-difference linearisation of Python callables f and h at (xo, uo).
 
-        # ---- numerical Jacobians of h ----
-        h0 = h(xo, uo, d)
-        ny = length(h0)
-        C_jac = zeros(ny, nx)
-        for i in 1:nx
-            xp = copy(xo); xp[i] += eps_fd
-            C_jac[:, i] = (h(xp, uo, d) - h0) / eps_fd
-        end
-        Dd_jac = zeros(ny, nd)
-        for i in 1:nd
-            dp = copy(d); dp[i] += eps_fd
-            Dd_jac[:, i] = (h(xo, uo, dp) - h0) / eps_fd
-        end
-        h_offset = h0 - C_jac * xo - Dd_jac * d
+    LinearMPC.jl's ``linearize`` uses ForwardDiff, which cannot propagate
+    dual numbers through Python callbacks.  This function computes the same
+    Jacobians in Python using forward finite differences, then delegates
+    model construction to the Julia ``LinearMPC.Model`` constructor.
 
-        if Ts > 0
-            # Continuous-time nonlinear -> linearise then discretise via ZOH
-            return LinearMPC.Model(A_jac, B_jac, float(Ts);
-                                   Bd = Bd_jac, C = C_jac, Dd = Dd_jac,
-                                   f_offset = f_offset, h_offset = h_offset,
-                                   xo = xo, uo = uo,
-                                   true_dynamics = f, true_h = h)
-        else
-            # Discrete-time nonlinear: Jacobians ARE the DT system matrices
-            return LinearMPC.Model(A_jac, B_jac;
-                                   Gd = Bd_jac, C = C_jac, Dd = Dd_jac,
-                                   f_offset = f_offset, h_offset = h_offset,
-                                   xo = xo, uo = uo,
-                                   true_dynamics = f, true_h = h)
-        end
-    end
-end
-""")
+    Parameters
+    ----------
+    f  : callable, (x, u, d) -> array-like — next-state (DT) or ẋ (CT)
+    h  : callable, (x, u, d) -> array-like — output
+    xo : ndarray — operating-point state
+    uo : ndarray — operating-point input
+    d  : ndarray — operating-point disturbance (may be empty)
+
+    Returns
+    -------
+    A, B, Bd, f_offset, C, Dd, h_offset : ndarrays
+        Jacobian matrices and affine offsets for the linearised model.
+    """
+    eps = _LINEARIZATION_EPS
+    nx, nu, nd = len(xo), len(uo), len(d)
+
+    f0 = np.asarray(f(xo, uo, d), dtype=float)
+    h0 = np.asarray(h(xo, uo, d), dtype=float)
+    ny = len(h0)
+
+    A = np.zeros((nx, nx))
+    for i in range(nx):
+        xp = xo.copy(); xp[i] += eps
+        A[:, i] = (np.asarray(f(xp, uo, d), dtype=float) - f0) / eps
+
+    B = np.zeros((nx, nu))
+    for i in range(nu):
+        up = uo.copy(); up[i] += eps
+        B[:, i] = (np.asarray(f(xo, up, d), dtype=float) - f0) / eps
+
+    Bd = np.zeros((nx, nd))
+    for i in range(nd):
+        dp = d.copy(); dp[i] += eps
+        Bd[:, i] = (np.asarray(f(xo, uo, dp), dtype=float) - f0) / eps
+
+    f_offset = f0 - A @ xo - B @ uo - Bd @ d
+
+    C = np.zeros((ny, nx))
+    for i in range(nx):
+        xp = xo.copy(); xp[i] += eps
+        C[:, i] = (np.asarray(h(xp, uo, d), dtype=float) - h0) / eps
+
+    Dd = np.zeros((ny, nd))
+    for i in range(nd):
+        dp = d.copy(); dp[i] += eps
+        Dd[:, i] = (np.asarray(h(xo, uo, dp), dtype=float) - h0) / eps
+
+    h_offset = h0 - C @ xo - Dd @ d
+
+    return A, B, Bd, f_offset, C, Dd, h_offset
 
 
 class ParameterRange:
@@ -156,14 +153,39 @@ class Model:
                  xo=np.zeros(0), d=None):
         if callable(F_or_f):
             # --- Nonlinear: Model(f, h, xo, uo[, Ts]) ---
+            # LinearMPC.jl's linearize() uses ForwardDiff and cannot propagate
+            # dual numbers through Python callbacks, so we linearise via finite
+            # differences in Python and then call LinearMPC.Model with the
+            # resulting matrices and the original callables as true_dynamics/true_h.
             f, h = F_or_f, G_or_h
             xo_val = np.asarray(Ts_or_xo, dtype=float)
             uo_val = np.asarray(uo, dtype=float)
-            # Ts = -1.0 is the LinearMPC.jl sentinel for discrete-time (no sampling period)
-            Ts_val = float(Ts) if Ts is not None else -1.0
             d_val  = np.zeros(0) if d is None else np.asarray(d, dtype=float)
-            self.jl_model = _jl_model_from_python(f, h, xo_val, uo_val, Ts_val,
-                                                   d=d_val)
+
+            A_lin, B_lin, Bd_lin, f_off, C_lin, Dd_lin, h_off = \
+                _linearize_python_callables(f, h, xo_val, uo_val, d_val)
+
+            # Wrap the Python callables so Julia can call them during simulation.
+            jl_f = _wrap_python_callable(f)
+            jl_h = _wrap_python_callable(h)
+
+            if Ts is not None:
+                # Continuous-time: pass CT Jacobians; Julia applies ZOH to
+                # produce the DT model matrices and stores jl_f as true_dynamics.
+                self.jl_model = LinearMPC.Model(
+                    A_lin, B_lin, float(Ts),
+                    Bd=Bd_lin, C=C_lin, Dd=Dd_lin,
+                    f_offset=f_off, h_offset=h_off,
+                    xo=xo_val, uo=uo_val,
+                    true_dynamics=jl_f, true_h=jl_h)
+            else:
+                # Discrete-time: Jacobians ARE the DT system matrices.
+                self.jl_model = LinearMPC.Model(
+                    A_lin, B_lin,
+                    Gd=Bd_lin, C=C_lin, Dd=Dd_lin,
+                    f_offset=f_off, h_offset=h_off,
+                    xo=xo_val, uo=uo_val,
+                    true_dynamics=jl_f, true_h=jl_h)
         elif Ts_or_xo is not None and np.isscalar(Ts_or_xo):
             # --- CT linear: Model(A, B, Ts, Bd=..., C=..., Dd=...) ---
             Bd_val = np.zeros([0, 0]) if Bd is None else np.asarray(Bd, dtype=float)
