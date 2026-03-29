@@ -25,6 +25,7 @@ def _wrap_python_callable(f):
 _jl_model_from_python = jl.seval("""
 let
     function(py_f, py_h, xo, uo, Ts; d = zeros(0))
+        # eps_fd = 1e-6 is a standard step for double-precision finite differences
         eps_fd = 1e-6
         nx, nu, nd = length(xo), length(uo), length(d)
 
@@ -158,6 +159,7 @@ class Model:
             f, h = F_or_f, G_or_h
             xo_val = np.asarray(Ts_or_xo, dtype=float)
             uo_val = np.asarray(uo, dtype=float)
+            # Ts = -1.0 is the LinearMPC.jl sentinel for discrete-time (no sampling period)
             Ts_val = float(Ts) if Ts is not None else -1.0
             d_val  = np.zeros(0) if d is None else np.asarray(d, dtype=float)
             self.jl_model = _jl_model_from_python(f, h, xo_val, uo_val, Ts_val,

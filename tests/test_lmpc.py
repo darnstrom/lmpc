@@ -12,6 +12,10 @@ from juliacall import Main as jl
 LinearMPC = jl.LinearMPC
 
 
+# Reference control value for the inverted-pendulum example at state [5, 5, 0, 0].
+# Computed by LinearMPC.jl with its default Np=50, Nc=5 settings.
+_INVPEND_REF_U = 1.7612519326
+
 # ---------------------------------------------------------------------------
 # Helper: wrap a Julia MPC object returned by mpc_examples into a Python MPC
 # ---------------------------------------------------------------------------
@@ -74,7 +78,7 @@ class TestComputeControl:
         """compute_control on the inverted-pendulum example matches the reference."""
         jl_mpc, _ = LinearMPC.mpc_examples("invpend")
         u = LinearMPC.compute_control(jl_mpc, [5.0, 5, 0, 0])
-        assert abs(float(u[0]) - 1.7612519326) < 1e-6
+        assert abs(float(u[0]) - _INVPEND_REF_U) < 1e-6
 
 
 # ---------------------------------------------------------------------------
@@ -183,7 +187,7 @@ class TestExplicitMPC:
         empc = ExplicitMPC(mpc, range=range_)
         LinearMPC.build_tree_b(empc.jl_mpc)
         u = LinearMPC.compute_control(empc.jl_mpc, [5.0, 5, 0, 0])
-        assert abs(float(u[0]) - 1.7612519326) < 1e-6
+        assert abs(float(u[0]) - _INVPEND_REF_U) < 1e-6
 
 
 # ---------------------------------------------------------------------------
@@ -610,7 +614,7 @@ class TestMPCExamplesPython:
         """compute_control on the Python-wrapped invpend example should match reference."""
         mpc, _ = mpc_examples("invpend")
         u = mpc.compute_control([5.0, 5, 0, 0])
-        assert abs(float(u[0]) - 1.7612519326) < 1e-6
+        assert abs(float(u[0]) - _INVPEND_REF_U) < 1e-6
 
     def test_mpc_examples_with_np_nc(self):
         """mpc_examples with explicit Np/Nc returns valid Python objects."""
@@ -648,7 +652,7 @@ class TestParameterRange:
         empc = ExplicitMPC(mpc, range=pr)
         LinearMPC.build_tree_b(empc.jl_mpc)
         u = LinearMPC.compute_control(empc.jl_mpc, [5.0, 5, 0, 0])
-        assert abs(float(u[0]) - 1.7612519326) < 1e-6
+        assert abs(float(u[0]) - _INVPEND_REF_U) < 1e-6
 
     def test_certify_with_python_range(self):
         """MPC.certify() should accept a Python ParameterRange."""
