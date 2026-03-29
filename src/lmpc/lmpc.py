@@ -5,31 +5,64 @@ from typing import cast
 from juliacall import Main as jl
 from juliacall import AnyValue
 
+from .model import Model, _wrap_python_callable
+
 jl = cast(ModuleType, jl)
 jl_version = (jl.VERSION.major, jl.VERSION.minor, jl.VERSION.patch)
 
 jl.seval("using LinearMPC")
 LinearMPC = jl.LinearMPC
 
-# Julia wrapper factory: converts a Python callable into a Julia Function.
-# The wrapper calls the Python function with the given arguments and converts
-# the returned Python array into a Julia Vector{Float64}.
-_jl_callable_wrapper = jl.seval(
-    "py_f -> (args...) -> pyconvert(Vector{Float64}, py_f(args...))"
-)
-def _wrap_python_callable(f):
-    return _jl_callable_wrapper(f)
+
+class ParameterRange:
+    """Python wrapper for Julia LinearMPC.ParameterRange.
+
+    Instances are returned by :meth:`MPC.range` and by :func:`mpc_examples`,
+    and can be passed directly to :class:`ExplicitMPC` and :meth:`MPC.certify`.
+    Fields (``xmin``, ``xmax``, ``rmin``, ``rmax``, ``dmin``, ``dmax``,
+    ``umin``, ``umax``, ``lmin``, ``lmax``) are Julia arrays that support
+    in-place slice assignment, e.g. ``pr.xmin[:] = [-5, -5]``.
+    """
+    jl_range: AnyValue
+
+    def __init__(self, jl_range):
+        self.jl_range = jl_range
+
+    @property
+    def xmin(self): return self.jl_range.xmin
+    @property
+    def xmax(self): return self.jl_range.xmax
+    @property
+    def rmin(self): return self.jl_range.rmin
+    @property
+    def rmax(self): return self.jl_range.rmax
+    @property
+    def dmin(self): return self.jl_range.dmin
+    @property
+    def dmax(self): return self.jl_range.dmax
+    @property
+    def umin(self): return self.jl_range.umin
+    @property
+    def umax(self): return self.jl_range.umax
+    @property
+    def lmin(self): return self.jl_range.lmin
+    @property
+    def lmax(self): return self.jl_range.lmax
+
 
 class MPC:
     jl_mpc:AnyValue
-    def __init__(self,A,B,Ts=None,Bd=None,Gd=None,C=np.zeros([0,0]),Dd=np.zeros([0,0]),Np=10, Nc=None):
+    def __init__(self, A_or_model, B=None, Ts=None, Bd=None, Gd=None,
+                 C=np.zeros([0,0]), Dd=np.zeros([0,0]), Np=10, Nc=None):
         if Nc is None: Nc = Np
-        if Ts is None or (Gd is not None and Bd is None):# discrete-time system
+        if isinstance(A_or_model, Model):
+            self.jl_mpc = LinearMPC.MPC(A_or_model.jl_model, Np=Np, Nc=Nc)
+        elif Ts is None or (Gd is not None and Bd is None):# discrete-time system
             if Gd is None: Gd = np.zeros([0,0]) 
-            self.jl_mpc = LinearMPC.MPC(A,B,Gd=Gd,C=C,Dd=Dd,Np=Np,Nc=Nc)
+            self.jl_mpc = LinearMPC.MPC(A_or_model,B,Gd=Gd,C=C,Dd=Dd,Np=Np,Nc=Nc)
         else:
             if Bd is None: Bd = np.zeros([0,0]) 
-            self.jl_mpc = LinearMPC.MPC(A,B,Ts,Bd=Bd,C=C,Dd=Dd,Np=Np,Nc=Nc)
+            self.jl_mpc = LinearMPC.MPC(A_or_model,B,Ts,Bd=Bd,C=C,Dd=Dd,Np=Np,Nc=Nc)
 
     def compute_control(self,x,r=None, d=None, uprev=None, l=None):
         return  LinearMPC.compute_control(self.jl_mpc, x, r = r, d=d, uprev=uprev, l=l)
@@ -138,20 +171,22 @@ class MPC:
 
     # certification
     def certify(self, range=None, AS0=[], single_soft=True):
-        return CertificationResult(LinearMPC.certify(self.jl_mpc,range=range,AS0=np.asarray(AS0,dtype=int),
+        jl_range = range.jl_range if isinstance(range, ParameterRange) else range
+        return CertificationResult(LinearMPC.certify(self.jl_mpc, range=jl_range,
+                                                     AS0=np.asarray(AS0,dtype=int),
                                                      single_soft=single_soft))
 
     def range(self, xmin=None,xmax=None,rmin=None,rmax=None,dmin=None,dmax=None,umin=None,umax=None):
-        range = LinearMPC.ParameterRange(self.jl_mpc)
-        if xmin is not None: range.xmin[:] = xmin
-        if xmax is not None: range.xmax[:] = xmax
-        if rmin is not None: range.rmin[:] = rmin
-        if rmax is not None: range.rmax[:] = rmax
-        if dmin is not None: range.dmin[:] = dmin
-        if dmax is not None: range.dmax[:] = dmax
-        if dmin is not None: range.umin[:] = umin
-        if dmax is not None: range.umax[:] = umax
-        return range
+        jl_range = LinearMPC.ParameterRange(self.jl_mpc)
+        if xmin is not None: jl_range.xmin[:] = xmin
+        if xmax is not None: jl_range.xmax[:] = xmax
+        if rmin is not None: jl_range.rmin[:] = rmin
+        if rmax is not None: jl_range.rmax[:] = rmax
+        if dmin is not None: jl_range.dmin[:] = dmin
+        if dmax is not None: jl_range.dmax[:] = dmax
+        if umin is not None: jl_range.umin[:] = umin
+        if umax is not None: jl_range.umax[:] = umax
+        return ParameterRange(jl_range)
 
     def mpqp(self, singlesided = False, single_soft = True):
         mpqp_jl = LinearMPC.mpc2mpqp(self.jl_mpc)
@@ -181,7 +216,8 @@ class MPC:
 class ExplicitMPC:
     jl_mpc:AnyValue
     def __init__(self,mpc,range=None,build_tree=False):
-        self.jl_mpc = LinearMPC.ExplicitMPC(mpc.jl_mpc,range=range,build_tree=build_tree)
+        jl_range = range.jl_range if isinstance(range, ParameterRange) else range
+        self.jl_mpc = LinearMPC.ExplicitMPC(mpc.jl_mpc,range=jl_range,build_tree=build_tree)
 
     def codegen(self,fname="empc",dir="codegen", opt_settings=None, src=True, 
                 float_type="double"):
@@ -219,6 +255,48 @@ class Simulation:
         self.xs = np.array(self.jl_sim.xs,copy=False, order='F')
         self.rs = np.array(self.jl_sim.rs,copy=False, order='F')
         self.ds = np.array(self.jl_sim.ds,copy=False, order='F')
-        self.ds = np.array(self.jl_sim.xhats,copy=False, order='F')
-        self.ds = np.array(self.jl_sim.yms,copy=False, order='F')
+        self.xhats = np.array(self.jl_sim.xhats,copy=False, order='F')
+        self.yms = np.array(self.jl_sim.yms,copy=False, order='F')
         self.solve_times= np.array(self.jl_sim.solve_times,copy=False, order='F')
+
+
+def mpc_examples(name, Np=None, Nc=None, params=None, settings=None):
+    """Load a named MPC example, returning a Python ``(MPC, ParameterRange)`` tuple.
+
+    Wraps ``LinearMPC.mpc_examples`` so that results are ready-to-use Python
+    objects.  All keyword arguments are forwarded to the Julia function.
+
+    Parameters
+    ----------
+    name : str
+        Example name (e.g. ``"invpend"``, ``"aircraft"``, ``"dcmotor"``).
+    Np : int, optional
+        Prediction horizon.  Uses the Julia default when omitted.
+    Nc : int, optional
+        Control horizon.  Defaults to *Np* when omitted.
+    params : dict, optional
+        Extra parameters forwarded to Julia (e.g. ``{"nx": 2}``).
+    settings : optional
+        Julia ``MPCSettings`` object forwarded verbatim.
+
+    Returns
+    -------
+    mpc : MPC
+    parameter_range : ParameterRange
+    """
+    kwargs = {}
+    if settings is not None:
+        kwargs['settings'] = settings
+    if params is not None:
+        kwargs['params'] = params
+
+    if Np is not None and Nc is not None:
+        jl_mpc, jl_range = LinearMPC.mpc_examples(name, Np, Nc, **kwargs)
+    elif Np is not None:
+        jl_mpc, jl_range = LinearMPC.mpc_examples(name, Np, **kwargs)
+    else:
+        jl_mpc, jl_range = LinearMPC.mpc_examples(name, **kwargs)
+
+    mpc = MPC.__new__(MPC)
+    mpc.jl_mpc = jl_mpc
+    return mpc, ParameterRange(jl_range)
